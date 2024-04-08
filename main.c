@@ -26,7 +26,9 @@ void i2c_transmit(uint8_t *buf, int len);
 
 void ssd1306_init(void);
 
-void ssd1306_write(int x);
+void ssd1306_write(const uint8_t img[]);
+
+void write_constant(const uint8_t val);
 
 typedef enum {
     SSD1306_SETLOWCOLUMN = 0x00,
@@ -90,14 +92,11 @@ int main(void) {
     ssd1306_init();             // Initialize the OLED display
 
     while (1) {
-        ssd1306_write(0);
-        __delay_cycles(1000000);
+        write_constant(0x0);
+        __delay_cycles(200000);
 
-//        ssd1306_write(0xFF);
-//        __delay_cycles(1000000);
-
-//        ssd1306_write(0x0F);
-//        __delay_cycles(1000000);
+        write_constant(0xFF);
+        __delay_cycles(200000);
     }
 
     while (1) {
@@ -168,69 +167,23 @@ void ssd1306_init(void) {
     }
 }
 
-// Use the provided font array to write characters to the screen buffer
-//void writeCharToBuffer(uint8_t* screen, char character, uint8_t x, uint8_t y) {
-//    if(character < ' ' || character > '~') return;
-//
-//    int offset = (character - ' ') * FONTWIDTH;
-//    for(int col = 0; col < FONTWIDTH; col++) {
-//        uint8_t columnData = FONT6x8[offset + col];
-//        for(int bit = 0; bit < FONTHEIGHT; bit++) {
-//            if(columnData & (1 << bit)) {
-//                int pixelIndex = x + col + (y + bit) * SSD1306_WIDTH;
-//                screen[pixelIndex / 8] |= (1 << (pixelIndex % 8));
-//            }
-//        }
-//    }
-//}
-
-
-uint8_t screen[7] = {0x40, 0x28, 0xFE, 0x28, 0xFE, 0x28, 0x00};
-
-// Reset page and column addresses.
-void reset_addresses() {
+void ssd1306_write(const uint8_t img[]) {
+    // Reset addresses
     const int8_t page_buf[4] = {0x00, SSD1306_PAGEADDR, 0, 7};
     i2c_transmit(page_buf, sizeof(page_buf));
 
     const int8_t col_buf[4] = {0x00, SSD1306_COLUMNADDR, 0, 127};
     i2c_transmit(col_buf, sizeof(col_buf));
+
+    // Write image
+    uint8_t data_buf[SSD1306_BYTES + 1];
+    data_buf[0] = 0x40;
+    memcpy(&data_buf[1], &img[0], SSD1306_BYTES);
+    i2c_transmit(data_buf, SSD1306_BYTES + 1);
 }
 
-void copy_image(const char img[], int64_t length) {
-    int64_t i;
-    for(i = 0; i < length; i += I2C_DATA_CHUNK) {
-        uint8_t data_buf[I2C_DATA_CHUNK + 1];
-        data_buf[0] = 0x40;
-
-        const int64_t chunk_size = min(I2C_DATA_CHUNK, length - i);
-        memcpy(&data_buf[1], &img[i], chunk_size);
-
-        i2c_transmit(data_buf, chunk_size + 1);
-    }
-}
-
-void solid_background(const uint8_t val) {
+void write_constant(const uint8_t val) {
     uint8_t img[SSD1306_BYTES];
-    memset(img, val, sizeof(img) / sizeof(img[0]));
-    copy_image(img, SSD1306_BYTES);
-}
-
-void image_draw(const char image[], char height, char width, char row, char column) {
-    reset_addresses();
-    int z;
-    for (z = 0; z < 10; z++) {
-        solid_background(0x0);
-        __delay_cycles(2000000);
-
-        solid_background(0xFF);
-        __delay_cycles(2000000);
-    }
-}
-
-void ssd1306_write(int x) {
-
-    image_draw(brain, brain[1], brain[0], 0, 0);
-
-    __delay_cycles(10000); // This shouldn't be necessary but this micro is bad
-//    }
+    memset(img, val, SSD1306_BYTES);
+    ssd1306_write(img);
 }
