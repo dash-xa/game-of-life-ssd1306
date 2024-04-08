@@ -55,9 +55,13 @@ extern const ssd1306_cmd_t ssd1306_init_cmds[];
 
 // Function prototypes
 void i2c_init(void);
+
 void i2c_transmit(uint8_t *buf, int length);
+
 void ssd1306_init(void);
+
 void ssd1306_write(const uint8_t img[]);
+
 void ssd1306_write_constant(const uint8_t val);
 
 #endif // SSD1306_H
