@@ -1,306 +1,236 @@
-/****************************************************************/
-/* Greg Whitmore                                                */
-/* greg@gwdeveloper.net                                         */
-/* www.gwdeveloper.net                                          */
-/****************************************************************/
-/* released under the "Use at your own risk" license            */
-/* use it how you want, where you want and have fun             */
-/* debugging the code.                                          */
-/* MSP430G2553                                                  */
-/****************************************************************/
-
 #include <msp430.h>
-
-#include <msp430f5529.h>
-#include <stdio.h>
-#include <math.h>
-#include "Oled_SSD1306.h"
+#include <stdbool.h>
+#include <stdint.h>
 #include "icons.h"
 
-// defines
-#define RED BIT0
-#define GREEN BIT6
+#define SSD1306_I2C_ADDRESS 0x3C // OLED I2C address
+#define SSD1306_HEIGHT 64
+#define SSD1306_WIDTH 128
+#define SSD1306_BYTES (SSD1306_HEIGHT * SSD1306_WIDTH / 8)
 
-// global variables
-unsigned char buttonOn;
-unsigned char buttonInvert;
-unsigned char buttonContrast = 0x01;
-
-// prototypes
-void init_Clock(void);
-void init_UCB0(void);
-void init_Timer0_A0(void);
-void init_GPIO(void);
-
-// main function configures hardware and runs demo program
-void main(void)
-{
-    WDTCTL = WDTPW + WDTHOLD;   // hold watchdog
-
-    SSD1306PinSetup();
-    init_GPIO();
-    init_Clock();
-    init_UCB0();
-    init_Timer0_A0();
-
-    // Clear any oscillator faults
-    do {
-        UCSCTL7 &= ~(XT2OFFG + XT1LFOFFG + DCOFFG); // Clear XT2, XT1, DCO fault flags
-        SFRIFG1 &= ~OFIFG;                         // Clear the oscillator fault interrupt flag
-    } while (SFRIFG1 & OFIFG);                      // Test oscillator fault flag
-
-    // Enable Watchdog Timer as interval timer sourced from ACLK
-    WDTCTL = WDTPW | WDTTMSEL | WDTSSEL__ACLK | WDTIS_3; // WDT as interval timer, ACLK, ~32768 divider
-    SFRIE1 |= WDTIE;                                   // Enable WDT interrupt
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#define I2C_DATA_CHUNK SSD1306_BYTES
 
 
-    __enable_interrupt();
 
-//    WDTCTL = WDTPW + WDTTMSEL + WDTSSEL + WDTIS1;   // set watchdog as debouncing interval
+// Prototypes
+void init_WDT(void);
 
-    SSD1306Init();
-    clearScreen();
+void init_LED(void);
 
-    // loop to for visual of framerate
-    int k;
-    for (k=0;k<30;k++)
-    {
-        Fill_RAM_PAGE(1, 0xff);
-        Fill_RAM_PAGE(3, 0xff);
-        Fill_RAM_PAGE(5, 0xff);
-        Fill_RAM_PAGE(7, 0xff);
+void toggle_LED(void);
 
-        __delay_cycles(1000);
+void i2c_init(void);
 
-        clearScreen();
+void i2c_transmit(uint8_t *buf, int len);
 
-        Fill_RAM_PAGE(2, 0xff);
-        Fill_RAM_PAGE(4, 0xff);
-        Fill_RAM_PAGE(6, 0xff);
+void ssd1306_init(void);
 
-        clearScreen();
+void ssd1306_write(int x);
 
-        __delay_cycles(1000);
+typedef enum {
+    SSD1306_SETLOWCOLUMN = 0x00,
+    SSD1306_SETHIGHCOLUMN = 0x10,
+    SSD1306_MEMORYMODE = 0x20,
+    SSD1306_COLUMNADDR = 0x21,
+    SSD1306_PAGEADDR = 0x22,
+    SSD1306_SETSTARTLINE = 0x40,
+    SSD1306_DEFAULT_ADDRESS = 0x78,
+    SSD1306_SETCONTRAST = 0x81,
+    SSD1306_CHARGEPUMP = 0x8D,
+    SSD1306_SEGREMAP = 0xA0,
+    SSD1306_DISPLAYALLON_RESUME = 0xA4,
+    SSD1306_DISPLAYALLON = 0xA5,
+    SSD1306_NORMALDISPLAY = 0xA6,
+    SSD1306_INVERTDISPLAY = 0xA7,
+    SSD1306_SETMULTIPLEX = 0xA8,
+    SSD1306_DISPLAYOFF = 0xAE,
+    SSD1306_DISPLAYON = 0xAF,
+    SSD1306_SETPAGE = 0xB0,
+    SSD1306_COMSCANINC = 0xC0,
+    SSD1306_COMSCANDEC = 0xC8,
+    SSD1306_SETDISPLAYOFFSET = 0xD3,
+    SSD1306_SETDISPLAYCLOCKDIV = 0xD5,
+    SSD1306_SETPRECHARGE = 0xD9,
+    SSD1306_SETCOMPINS = 0xDA,
+    SSD1306_SETVCOMDETECT = 0xDB,
+
+    SSD1306_SWITCHCAPVCC = 0x02,
+    SSD1306_NOP = 0xE3,
+} ssd1306_cmd_t;
+
+// From: https://github.com/lexus2k/ssd1306/blob/master/src/lcd/ssd1306_commands.h#L44
+static const ssd1306_cmd_t ssd1306_init_cmds[] = {
+        SSD1306_DISPLAYOFF, // display off
+        SSD1306_MEMORYMODE | 0x0, // Page Addressing mode
+        SSD1306_COMSCANDEC,             // Scan from 127 to 0 (Reverse scan)
+        SSD1306_SETSTARTLINE | 0x00,    // First line to start scanning from
+        SSD1306_SETCONTRAST, 0x7F,      // contast value to 0x7F according to datasheet
+        SSD1306_SEGREMAP | 0x01,        // Use reverse mapping. 0x00 - is normal mapping
+        SSD1306_NORMALDISPLAY,
+        SSD1306_SETMULTIPLEX, 63,       // Reset to default MUX. See datasheet
+        SSD1306_SETDISPLAYOFFSET, 0x00, // no offset
+        SSD1306_SETDISPLAYCLOCKDIV, 0x80,// set to default ratio/osc frequency
+        SSD1306_SETPRECHARGE, 0x22,     // switch precharge to 0x22 // 0xF1
+        SSD1306_SETCOMPINS, 0x12,       // set divide ratio
+        SSD1306_SETVCOMDETECT, 0x20,    // vcom deselect to 0x20 // 0x40
+        SSD1306_CHARGEPUMP, 0x14,       // Enable charge pump
+        SSD1306_DISPLAYALLON_RESUME,
+        SSD1306_DISPLAYON,
+};
+
+int main(void) {
+    WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
+
+    i2c_init();
+    init_WDT();
+    init_LED();
+    __enable_interrupt();       // Enable global interrupts
+
+    ssd1306_init();             // Initialize the OLED display
+
+    while (1) {
+        ssd1306_write(0);
+        __delay_cycles(1000000);
+
+//        ssd1306_write(0xFF);
+//        __delay_cycles(1000000);
+
+//        ssd1306_write(0x0F);
+//        __delay_cycles(1000000);
     }
 
-    // display brain icon
-    imageDraw(brain, 0, 28);
-
-    __delay_cycles(32000000);
-
-    clearScreen();
-
-    // display demo text with outline
-    stringDraw(2, 30, "MSP430G2553");
-    stringDraw(4, 14, "USCI OLED BOOSTER");
-    stringDraw(6, 38, "43oh.com");
-
-    // outline
-    verticalLine(0,0,64);
-    verticalLine(128, 0, 64);
-    horizontalLine(1,126,0);
-    horizontalLine(1,126,64);
-
-    // loop in LPM3
-    while (1)
-    {
-        LPM3;
-
-        //__no_operation();
-
+    while (1) {
+        // Main loop can perform other tasks or be put to sleep to save power
+        __bis_SR_register(LPM3_bits + GIE); // Enter LPM3 with interrupts
     }
 }
 
-// set clock to max
-//void init_Clock(void)
-//{
-//    BCSCTL2 = SELM_0 + DIVM_0 + DIVS_0;
-//
-//    if (CALBC1_16MHZ != 0xFF)
-//    {
-//        __delay_cycles(100000);
-//        DCOCTL = 0x00;
-//        BCSCTL1 = CALBC1_16MHZ;
-//        DCOCTL = CALDCO_16MHZ;
-//    }
-//
-//    BCSCTL1 |= XT2OFF + DIVA_0;
-//    BCSCTL3 = XT2S_0 + LFXT1S_0 + XCAP_1;
-//}
-
-void init_Clock(void) {
-    // Set up the DCO to run at 16 MHz
-    UCSCTL3 = SELREF__REFOCLK; // Set FLL reference to REFO
-    UCSCTL4 = SELA__REFOCLK;   // Set ACLK to REFO
-
-    __bis_SR_register(SCG0);   // Disable the FLL control loop
-    UCSCTL0 = 0x0000;          // Set lowest possible DCOx, MODx
-    UCSCTL1 = DCORSEL_5;       // Select DCO range 16MHz operation
-    UCSCTL2 = FLLD_0 + 487;    // Set DCO Multiplier for 16MHz
-                               // (N + 1) * FLLRef = Fdco
-                               // (487 + 1) * 32768 = 16MHz
-    __bic_SR_register(SCG0);   // Enable the FLL control loop
-
-    // Worst-case settling time for the DCO when the DCO range bits have been
-    // changed is n x 32 x 32 x f_MCLK / f_FLL_reference. See UCS chapter in 5xx
-    // UG for optimization.
-    // 32 x 32 x 16 MHz / 32,768 Hz = 500000 = MCLK cycles for DCO to settle
-    __delay_cycles(500000);
-
-    // Loop until XT1, XT2 & DCO fault flag is cleared
-    do {
-        // Clear XT2,XT1,DCO fault flags
-        UCSCTL7 &= ~(XT2OFFG | XT1LFOFFG | DCOFFG);
-        // Clear fault flags
-        SFRIFG1 &= ~OFIFG;
-    } while (SFRIFG1 & OFIFG); // Test oscillator fault flag
-
-    // Now that we're running at 16 MHz, adjust the rest of your clocks as needed
+void init_WDT(void) {
+    WDTCTL = WDT_ADLY_1000;  // WDT interval timer mode, ACLK, 1000ms
+    SFRIE1 |= WDTIE;         // Enable WDT interrupt
 }
 
-
-// gpio init buttons and leds
-void init_GPIO(void)
-{
-    P1OUT |= BIT6;
-    P1DIR |= BIT0 + BIT6;
-
-    // LP S2 button
-    P1OUT |= BIT3;
-    P1REN = BIT3;
-    P1IES = BIT3;
-    P1IFG = 0;
-    P1IE = BIT3;
-
-    // OLED booster buttons
-    P2OUT |= BIT3 + BIT4;
-    P2REN = BIT3 + BIT4;
-    P2IES = BIT3 + BIT4;
-    P2IFG = 0;
-    P2IE = BIT3 + BIT4;
-
+void init_LED(void) {
+    P1DIR |= BIT0;           // Set P1.0 to output direction (LED)
+    P1OUT &= ~BIT0;          // Start with LED off
 }
 
-void init_UCB0(void)
-{
-    UCB0CTL1 |= UCSWRST;
-    UCB0CTL0 = UCCKPH + UCMSB + UCMST + UCMODE_1 + UCSYNC;
-    UCB0CTL1 = UCSSEL_2 + UCSWRST;
-    UCB0BR0 = 32;
-    UCB0CTL1 &= ~UCSWRST;
-}
-
-// timer0_a0 on 1s wakeup as activity indicator
-void init_Timer0_A0(void)
-{
-    TA0CCTL0 = CM_0 + CCIS_0 + OUTMOD_4 + CCIE;
-    TA0CCR0 = 32768;
-    TA0CTL = TASSEL_1 + ID_0 + MC_1;
-}
-
-// toggle LEDs at 1s interval
-#pragma vector=TIMER0_A0_VECTOR
-__interrupt void timerA0_isr(void)
-{
-    P1OUT ^= RED + GREEN;
-
-    LPM3_EXIT;
-
-    //__no_operation();
-}
-
-// S2 on Launchpad turns display on or off
-//#pragma vector=PORT1_VECTOR
-//__interrupt void port1_isr(void)
-//{
-//    P1IFG &= ~BIT3;         // clear P1.3 button flag
-//    P1IE &= ~BIT3;          // clear P1.3 interrupt
-//
-//    IFG1 &= ~WDTIFG;
-//    WDTCTL = (WDTCTL & 7) + WDTCNTCL + WDTPW + WDTTMSEL;
-//    IE1 |= WDTIE;
-//
-//    // do something here
-//    if (buttonOn == 1)
-//    {
-//        buttonOn = 0;
-//        Set_Display_On_Off(0);
-//    }
-//    else
-//    {
-//        buttonOn = 1;
-//        Set_Display_On_Off(1);
-//    }
-//}
-
-// left button inverts display; right button adjusts contrast
-//#pragma vector=PORT2_VECTOR
-//__interrupt void port2_isr(void)
-//{
-//    if (P2IFG & BIT3)
-//    {
-//        P2IFG &= ~(BIT3 + BIT4);            // clear P2 button flag
-//        P2IE &= ~(BIT3 + BIT4);         // clear P2 interrupt
-//
-//        IFG1 &= ~WDTIFG;
-//        WDTCTL = (WDTCTL & 7) + WDTCNTCL + WDTPW + WDTTMSEL;
-//        IE1 |= WDTIE;
-//
-//        // do something here
-//        if (buttonContrast < SSD1306_MAXCONTRAST)
-//        {
-//            buttonContrast += 25;
-//            Set_Contrast_Control(buttonContrast);
-//        }
-//        else
-//        {
-//            buttonContrast = 0x01;
-//            Set_Contrast_Control(buttonContrast);
-//        }
-//
-//        //__no_operation();
-//
-//    }
-//
-//    if (P2IFG & BIT4)
-//    {
-//        P2IFG &= ~(BIT3 + BIT4);            // clear P2 button flag
-//        P2IE &= ~(BIT3 + BIT4);         // clear P2 interrupt
-//
-//        IFG1 &= ~WDTIFG;
-//        WDTCTL = (WDTCTL & 7) + WDTCNTCL + WDTPW + WDTTMSEL;
-//        IE1 |= WDTIE;
-//
-//        // do something here
-//        if (buttonInvert == 1)
-//        {
-//            buttonInvert = 0;
-//            Set_Inverse_Display(0);
-//        }
-//        else
-//        {
-//            buttonInvert = 1;
-//            Set_Inverse_Display(1);
-//        }
-//
-//        //__no_operation();
-//
-//    }
-//
-//}
-
-// wdt timer is used for debouncing
+// WDT Interrupt Service Routine
 #pragma vector=WDT_VECTOR
-__interrupt void watchdog_isr(void)
-{
-//    IE1 &= ~WDTIE;
-    // Enable Watchdog Timer interrupt
-    SFRIE1 |= WDTIE;
+
+__interrupt void WDT_ISR(void) {
+    toggle_LED();           // Toggle LED every WDT interrupt (1 second)
+}
+
+void toggle_LED(void) {
+    P1OUT ^= BIT0;          // Toggle P1.0 using exclusive-OR
+}
 
 
-    P1IFG &= ~BIT3;         // clear P1.3 button flag
-    P1IE |= BIT3;           // re-enable P1.3 interrupt
+void i2c_init(void) {
+    P3SEL |= BIT0 + BIT1;        // Assign P3.0 and P3.1 to I2C function
 
-    P2IFG &= ~(BIT3 + BIT4);
-    P2IE |= BIT3 + BIT4;
+    UCB0CTL1 |= UCSWRST;         // Enable SW reset
+
+    UCB0CTL0 = UCMST + UCMODE_3 + UCSYNC; // I2C Master, sync mode
+    UCB0CTL1 = UCSSEL_2 + UCSWRST; // Use SMCLK, keep SW reset
+
+    UCB0BR0 = 10;                // fSCL = SMCLK/10 ~ 100kHz
+    UCB0BR1 = 0;
+
+    UCB0I2CSA = SSD1306_I2C_ADDRESS; // Set I2C address
+
+    UCB0CTL1 &= ~UCSWRST;        // Clear SW reset, resume operation
+}
+
+void i2c_transmit(uint8_t *buf, int length) {
+    UCB0CTL1 |= UCTR; // Transmitter mode
+    UCB0CTL1 |= UCTXSTT; // Generate start condition
+
+    int i;
+    for (i = 0; i < length; i++) {
+        UCB0TXBUF = buf[i]; // Write next data byte to register
+        while (!(UCB0IFG & UCTXIFG)); // Wait for flag to confirm data was sent
+    }
+
+    UCB0CTL1 |= UCTXSTP; // Send stop condition
+    while (!(UCB0CTL1 & UCTXSTP)); // Wait to confirm stop
+
+    __delay_cycles(100); // This shouldn't be necessary but this micro is bad
+}
+
+void ssd1306_init(void) {
+    int i = 0;
+    for (i = 0; i < sizeof(ssd1306_init_cmds); i++) {
+        uint8_t cmd_buf[2] = {0x00, ssd1306_init_cmds[i]};
+        i2c_transmit(cmd_buf, 2);
+    }
+}
+
+// Use the provided font array to write characters to the screen buffer
+//void writeCharToBuffer(uint8_t* screen, char character, uint8_t x, uint8_t y) {
+//    if(character < ' ' || character > '~') return;
+//
+//    int offset = (character - ' ') * FONTWIDTH;
+//    for(int col = 0; col < FONTWIDTH; col++) {
+//        uint8_t columnData = FONT6x8[offset + col];
+//        for(int bit = 0; bit < FONTHEIGHT; bit++) {
+//            if(columnData & (1 << bit)) {
+//                int pixelIndex = x + col + (y + bit) * SSD1306_WIDTH;
+//                screen[pixelIndex / 8] |= (1 << (pixelIndex % 8));
+//            }
+//        }
+//    }
+//}
+
+
+uint8_t screen[7] = {0x40, 0x28, 0xFE, 0x28, 0xFE, 0x28, 0x00};
+
+// Reset page and column addresses.
+void reset_addresses() {
+    const int8_t page_buf[4] = {0x00, SSD1306_PAGEADDR, 0, 7};
+    i2c_transmit(page_buf, sizeof(page_buf));
+
+    const int8_t col_buf[4] = {0x00, SSD1306_COLUMNADDR, 0, 127};
+    i2c_transmit(col_buf, sizeof(col_buf));
+}
+
+void copy_image(const char img[], int length) {
+    int i;
+    for(i = 0; i < length; i += I2C_DATA_CHUNK) {
+        uint8_t data_buf[I2C_DATA_CHUNK + 1];
+        data_buf[0] = 0x40;
+
+        const int chunk_size = min(I2C_DATA_CHUNK, length - i);
+        memcpy(&data_buf[1], &img[i], chunk_size);
+
+        i2c_transmit(data_buf, chunk_size + 1);
+    }
+}
+
+void solid_background(const uint8_t val) {
+    uint8_t img[SSD1306_BYTES];
+    memset(img, val, sizeof(img) / sizeof(img[0]));
+    copy_image(img, SSD1306_BYTES);
+}
+
+void image_draw(const char image[], char height, char width, char row, char column) {
+    reset_addresses();
+    int z;
+    for (z = 0; z < 10; z++) {
+        solid_background(0x0);
+        __delay_cycles(2000000);
+
+        solid_background(0xFF);
+        __delay_cycles(2000000);
+    }
+}
+
+void ssd1306_write(int x) {
+
+    image_draw(brain, brain[1], brain[0], 0, 0);
+
+    __delay_cycles(10000); // This shouldn't be necessary but this micro is bad
+//    }
 }
