@@ -196,13 +196,13 @@ void reset_addresses() {
     i2c_transmit(col_buf, sizeof(col_buf));
 }
 
-void copy_image(const char img[], int length) {
-    int i;
+void copy_image(const char img[], int64_t length) {
+    int64_t i;
     for(i = 0; i < length; i += I2C_DATA_CHUNK) {
         uint8_t data_buf[I2C_DATA_CHUNK + 1];
         data_buf[0] = 0x40;
 
-        const int chunk_size = min(I2C_DATA_CHUNK, length - i);
+        const int64_t chunk_size = min(I2C_DATA_CHUNK, length - i);
         memcpy(&data_buf[1], &img[i], chunk_size);
 
         i2c_transmit(data_buf, chunk_size + 1);
