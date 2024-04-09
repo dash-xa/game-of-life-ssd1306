@@ -5,8 +5,98 @@
 #include "Io_SSD1306.h"
 #define SNAKE_LENGTH        64
 
-
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+#include <msp430.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+
+#define GRID_SIZE 8
+#define DISPLAY_WIDTH 128
+#define DISPLAY_HEIGHT 64
+#define DISPLAY_BUFFER_SIZE (DISPLAY_WIDTH * DISPLAY_HEIGHT / 8)
+#define BLOCK_SIZE (DISPLAY_WIDTH / GRID_SIZE)
+
+uint8_t displayBuffer[DISPLAY_BUFFER_SIZE];
+bool grid[GRID_SIZE][GRID_SIZE] = {0};
+bool nextGrid[GRID_SIZE][GRID_SIZE] = {0};
+
+// Forward declarations
+void initializeGame(void);
+void updateGame(void);
+void drawGridToDisplayBuffer(void);
+void toggleRandomCell(void);
+int countNeighbors(int x, int y);
+extern void ssd1306_write(const uint8_t img[]); // Assuming this function is defined elsewhere
+
+void initializeGame(void) {
+    // Clear the grid
+    memset(grid, 0, sizeof(grid));
+
+    // Initialize with a "Beacon" pattern
+    grid[1][1] = true;
+    grid[1][2] = true;
+    grid[2][1] = true;
+    grid[2][2] = true;
+
+    grid[3][3] = true;
+    grid[3][4] = true;
+    grid[4][3] = true;
+    grid[4][4] = true;
+}
+
+void updateGame(void) {
+    int x, y;
+    for (x = 0; x < GRID_SIZE; x++) {
+        for (y = 0; y < GRID_SIZE; y++) {
+            int neighbors = countNeighbors(x, y);
+            nextGrid[x][y] = (grid[x][y] && (neighbors == 2 || neighbors == 3)) || (!grid[x][y] && neighbors == 3);
+        }
+    }
+    memcpy(grid, nextGrid, sizeof(grid));
+}
+
+void drawGridToDisplayBuffer(void) {
+    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear buffer for fresh draw
+    int x, y, bx, by;
+    for (x = 0; x < GRID_SIZE; x++) {
+        for (y = 0; y < GRID_SIZE; y++) {
+            if (grid[x][y]) {
+                for (bx = 0; bx < BLOCK_SIZE; bx++) {
+                    for (by = 0; by < BLOCK_SIZE; by++) {
+                        int pixelIndex = ((y * BLOCK_SIZE + by) * DISPLAY_WIDTH + (x * BLOCK_SIZE + bx)) / 8;
+                        int bitPosition = 7 - ((y * BLOCK_SIZE + by) % 8);
+                        displayBuffer[pixelIndex] |= (1 << bitPosition);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void toggleRandomCell(void) {
+    // This would ideally use a better random generator suited for your needs
+    int x = rand() % GRID_SIZE;
+    int y = rand() % GRID_SIZE;
+    grid[x][y] = !grid[x][y];
+}
+
+int countNeighbors(int x, int y) {
+    int count = 0, dx, dy;
+    for (dx = -1; dx <= 1; dx++) {
+        for (dy = -1; dy <= 1; dy++) {
+            if (dx == 0 && dy == 0) continue; // Skip the cell itself
+            int nx = (x + dx + GRID_SIZE) % GRID_SIZE;
+            int ny = (y + dy + GRID_SIZE) % GRID_SIZE;
+            count += grid[nx][ny] ? 1 : 0;
+        }
+    }
+    return count;
+}
+
+
+
 
 void clear_buffer(uint8_t* buffer) {
     memset(buffer, 0, SSD1306_BYTES);
@@ -59,21 +149,17 @@ int main(void) {
 
     ssd1306_init();             // Initialize the OLED display
 
-//    ssd1306_write_constant(0x00);
+    initializeGame();
+    drawGridToDisplayBuffer();
+    ssd1306_write(displayBuffer);
 
-    uint8_t displayBuffer[SSD1306_BYTES];
-    uint16_t headPosition = 0;
-    const uint16_t maxPosition = 2 * (SSD1306_WIDTH + SSD1306_HEIGHT - 2); // Total perimeter length
-
-    while (1) {
-        clear_buffer(displayBuffer);
-        draw_snake(displayBuffer, headPosition);
-
+    // Main loop
+    while(1) {
+        updateGame();
+        drawGridToDisplayBuffer();
         ssd1306_write(displayBuffer);
-//        __delay_cycles(10);  // Adjust for your system's timing
-
-
-        headPosition = (headPosition + 1) % maxPosition;
+        __delay_cycles(500000); // Simple delay; adjust as needed
+//        toggleRandomCell(); // For demonstration, toggle a random cell each cycle
     }
 
 
@@ -103,3 +189,4 @@ __interrupt void WDT_ISR(void) {
 void toggle_LED(void) {
     P1OUT ^= BIT0;          // Toggle P1.0 using exclusive-OR
 }
+
