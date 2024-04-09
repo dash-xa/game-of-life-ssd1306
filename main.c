@@ -7,7 +7,14 @@
 #define DISPLAY_WIDTH 128
 #define DISPLAY_HEIGHT 64
 #define DISPLAY_BUFFER_SIZE (DISPLAY_WIDTH * DISPLAY_HEIGHT / 8)
-#define MAX_ACTIVE_CELLS 3000
+
+
+#define CELL_SIZE 4 // Each logical cell represents an 8x8 block of pixels
+#define REDUCED_WIDTH (DISPLAY_WIDTH / CELL_SIZE)
+#define REDUCED_HEIGHT (DISPLAY_HEIGHT / CELL_SIZE)
+#define MAX_ACTIVE_CELLS 512 // Adjust based on your requirements
+
+
 
 typedef struct {
     uint8_t x;
@@ -15,13 +22,14 @@ typedef struct {
 } Cell;
 
 Cell activeCells[MAX_ACTIVE_CELLS];
+Cell nextActiveCells[MAX_ACTIVE_CELLS];
 uint16_t activeCellCount = 0;
+uint16_t nextActiveCellCount = 0;
 
 uint8_t displayBuffer[DISPLAY_BUFFER_SIZE];
 
 void initializeGame(void);
 void updateGame(void);
-void activateCell(uint8_t x, uint8_t y);
 void drawCell(uint8_t x, uint8_t y, bool state);
 int countNeighbors(uint8_t x, uint8_t y);
 void delayMs(uint16_t ms);
@@ -43,66 +51,83 @@ int main(void) {
 
     while (1) {
         updateGame();
-        ssd1306_write(displayBuffer); // Update display
-//        delayMs(1000); // Slow down updates for visibility
+        ssd1306_write(displayBuffer);
     }
 }
 
+void clearDisplayBuffer() {
+    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear the display buffer
+}
+
+void activateCellAndIncrementCount(uint8_t reducedX, uint8_t reducedY) {
+    activeCells[activeCellCount++] = (Cell){reducedX, reducedY};
+    drawCell(reducedX, reducedY, true);
+}
+
+void initializeGameWithVerticalLine(void) {
+    clearDisplayBuffer();
+    activeCellCount = 0;
+
+    // Initialize with a pattern that fits the reduced resolution
+    // Example: A line of "cells" down the center
+    int x = REDUCED_WIDTH / 2;
+    int y;
+    for (y = 2; y < REDUCED_HEIGHT - 2; y++) {
+//        activeCells[activeCellCount++] = (Cell){x, y};
+//        drawCell(x, y, true);
+        activateCellAndIncrementCount(x, y);
+    }
+}
+
+
+
+// Helper function to place a glider at a specific starting position in the reduced grid
+void placeGlider(uint8_t startX, uint8_t startY) {
+    activateCellAndIncrementCount(startX, startY + 2);
+    activateCellAndIncrementCount(startX + 1, startY + 2);
+    activateCellAndIncrementCount(startX + 2, startY + 2);
+    activateCellAndIncrementCount(startX + 2, startY + 1);
+    activateCellAndIncrementCount(startX + 1, startY);
+}
 
 void initializeGame(void) {
-    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear the display buffer
-    activeCellCount = 0; // Reset active cell count
+    clearDisplayBuffer();  // Ensures the display starts clean
+    activeCellCount = 0;   // Reset the count of active cells
 
-    // Define spacing between gliders and their starting position
-    int spacingX = 10;
-    int spacingY = 10;
-    int startX = 10;
-    int startY = 10;
-
-    // Calculate the number of gliders and ensure we stay within the active cell limit
-    int gliderCount = 20; // Example count, adjust based on your requirements
-
-    int i, x, y; // Declare iteration variables outside of loops
-
-    for (i = 0; i < gliderCount; i++) {
-        x = startX + (spacingX * i); // X position for the current glider
-        y = startY + (spacingY * i); // Y position for the current glider
-
-        // Check to ensure the glider will fit within the display boundaries
-        if (x + 2 < DISPLAY_WIDTH && y + 2 < DISPLAY_HEIGHT) {
-            // Define the standard glider pattern
-            activateCell(x + 1, y);
-            activateCell(x + 2, y + 1);
-            activateCell(x, y + 2);
-            activateCell(x + 1, y + 2);
-            activateCell(x + 2, y + 2);
-        }
-    }
+    // Place several gliders on the grid
+    placeGlider(2, 2);  // Top-left glider
+    placeGlider(REDUCED_WIDTH - 5, 2);  // Top-right glider
+    placeGlider(2, REDUCED_HEIGHT - 5);  // Bottom-left glider
+    placeGlider(REDUCED_WIDTH - 5, REDUCED_HEIGHT - 5);  // Bottom-right glider
 }
 
+bool isCellActive(uint8_t reducedX, uint8_t reducedY) {
+    int x = reducedX * CELL_SIZE;
+    int y = reducedY * CELL_SIZE;
+
+    return displayBuffer[(y / 8) * DISPLAY_WIDTH + x] & (1 << (y % 8));
+}
 
 void updateGame(void) {
-    Cell nextActiveCells[MAX_ACTIVE_CELLS];
-    uint16_t nextActiveCellCount = 0;
-
-    int i, dx, dy, x, y, nx, ny, count, index;
+    nextActiveCellCount = 0;
     bool isActive, nextState;
+    int i;
 
+    /*
     for (i = 0; i < activeCellCount; i++) {
-        x = activeCells[i].x;
-        y = activeCells[i].y;
+        int x = activeCells[i].x;
+        int y = activeCells[i].y;
 
+        int dx, dy;
         for (dx = -1; dx <= 1; dx++) {
             for (dy = -1; dy <= 1; dy++) {
-                nx = (x + dx + DISPLAY_WIDTH) % DISPLAY_WIDTH;
-                ny = (y + dy + DISPLAY_HEIGHT) % DISPLAY_HEIGHT;
+                int nx = (x + dx + REDUCED_WIDTH) % REDUCED_WIDTH;
+                int ny = (y + dy + REDUCED_HEIGHT) % REDUCED_HEIGHT;
 
-                // Check and update only if the cell is not already processed
-                index = ny * DISPLAY_WIDTH + nx;
+                if (1) {
+                    int count = countNeighbors(nx, ny);
 
-                if (!(displayBuffer[index / 8] & (1 << (index % 8)))) {
-                    count = countNeighbors(nx, ny);
-                    isActive = displayBuffer[(y / 8) * DISPLAY_WIDTH + x] & (1 << (y % 8));
+                    isActive = isCellActive(nx, ny);
                     nextState = (isActive && (count == 2 || count == 3)) || (!isActive && count == 3);
 
                     if (nextState && nextActiveCellCount < MAX_ACTIVE_CELLS) {
@@ -111,35 +136,50 @@ void updateGame(void) {
                 }
             }
         }
+    }*/
+
+    int x, y;
+    for (x = 0; x < REDUCED_WIDTH; x++) {
+        for (y = 0; y < REDUCED_HEIGHT; y++) {
+            int count = countNeighbors(x, y); // Count live neighbors of the cell
+            bool isActive = isCellActive(x, y);
+            bool nextState = (isActive && (count == 2 || count == 3)) || (!isActive && count == 3);
+
+            // If the cell should be alive in the next generation, add it to the nextActiveCells array
+            if (nextState && nextActiveCellCount < MAX_ACTIVE_CELLS) {
+                nextActiveCells[nextActiveCellCount++] = (Cell){x, y};
+                // Note: You might want to directly update displayBuffer here if drawing cells immediately
+            }
+        }
     }
 
-    // update display
+    // update displays
     for (i = 0; i < activeCellCount; i++) {
         drawCell(activeCells[i].x, activeCells[i].y, false);
     }
+//    clearDisplayBuffer();
     for (i = 0; i < nextActiveCellCount; i++) {
         drawCell(nextActiveCells[i].x, nextActiveCells[i].y, true);
     }
-//    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Prepare for next generation
-//    drawCell(nx, ny, true);
 
-    activeCellCount = nextActiveCellCount;
     memcpy(activeCells, nextActiveCells, sizeof(Cell) * nextActiveCellCount);
+    activeCellCount = nextActiveCellCount;
 }
 
-void activateCell(uint8_t x, uint8_t y) {
-    if (activeCellCount < MAX_ACTIVE_CELLS) {
-        activeCells[activeCellCount++] = (Cell){x, y};
-        drawCell(x, y, true);
-    }
-}
+void drawCell(uint8_t reducedX, uint8_t reducedY, bool state) {
+    int startX = reducedX * CELL_SIZE;
+    int startY = reducedY * CELL_SIZE;
 
-void drawCell(uint8_t x, uint8_t y, bool state) {
-    uint16_t byteIndex = (y / 8) * DISPLAY_WIDTH + x;
-    if (state) {
-        displayBuffer[byteIndex] |= (1 << (y % 8));
-    } else {
-        displayBuffer[byteIndex] &= ~(1 << (y % 8));
+    int x, y;
+    for (x = startX; x < startX + CELL_SIZE; x++) {
+        for (y = startY; y < startY + CELL_SIZE; y++) {
+            uint16_t byteIndex = (y / 8) * DISPLAY_WIDTH + x;
+            if (state) {
+                displayBuffer[byteIndex] |= (1 << (y % 8));
+            } else {
+                displayBuffer[byteIndex] &= ~(1 << (y % 8));
+            }
+        }
     }
 }
 
@@ -149,9 +189,9 @@ int countNeighbors(uint8_t x, uint8_t y) {
     for (dx = -1; dx <= 1; dx++) {
         for (dy = -1; dy <= 1; dy++) {
             if (dx == 0 && dy == 0) continue;
-            int nx = (x + dx + DISPLAY_WIDTH) % DISPLAY_WIDTH;
-            int ny = (y + dy + DISPLAY_HEIGHT) % DISPLAY_HEIGHT;
-            if (displayBuffer[(ny / 8) * DISPLAY_WIDTH + nx] & (1 << (ny % 8))) {
+            int nx = (x + dx + REDUCED_WIDTH) % REDUCED_WIDTH;
+            int ny = (y + dy + REDUCED_HEIGHT) % REDUCED_HEIGHT;
+            if (isCellActive(nx, ny)) {
                 count++;
             }
         }
