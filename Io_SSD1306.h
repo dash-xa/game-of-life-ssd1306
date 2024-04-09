@@ -57,6 +57,7 @@ extern const ssd1306_cmd_t ssd1306_init_cmds[];
 void i2c_init(void);
 
 void i2c_transmit(uint8_t *buf, int length);
+void i2c_transmit_pre(uint8_t pre, uint8_t *buf, int len);
 
 void ssd1306_init(void);
 

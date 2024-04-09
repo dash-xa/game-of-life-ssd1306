@@ -37,6 +37,24 @@ void i2c_init(void) {
 }
 
 // Transmit data over I2C
+void i2c_transmit_pre(uint8_t pre, uint8_t *buf, int len) {
+    int i;
+    UCB0CTL1 |= UCTR + UCTXSTT; // Transmitter mode + start condition
+
+    while (!(UCB0IFG & UCTXIFG)); // Wait until buffer is ready
+    UCB0TXBUF = pre; // Send byte
+
+    for (i = 0; i < len; i++) {
+        while (!(UCB0IFG & UCTXIFG)); // Wait until buffer is ready
+        UCB0TXBUF = buf[i]; // Send byte
+    }
+
+    while (!(UCB0IFG & UCTXIFG)); // Ensure the last byte is transmitted
+    UCB0CTL1 |= UCTXSTP; // Send stop condition
+    while (UCB0CTL1 & UCTXSTP); // Wait for stop condition to be sent
+}
+
+// Transmit data over I2C
 void i2c_transmit(uint8_t *buf, int len) {
     int i;
     UCB0CTL1 |= UCTR + UCTXSTT; // Transmitter mode + start condition
@@ -68,10 +86,7 @@ void ssd1306_write(const uint8_t img[]) {
     uint8_t col_buf[] = {0x00, SSD1306_COLUMNADDR, 0, 127};
     i2c_transmit(col_buf, sizeof(col_buf));
 
-    uint8_t data_buf[SSD1306_BYTES + 1];
-    data_buf[0] = 0x40; // Control byte indicating the start of image data
-    memcpy(&data_buf[1], img, SSD1306_BYTES);
-    i2c_transmit(data_buf, sizeof(data_buf));
+    i2c_transmit_pre(0x40, img, SSD1306_BYTES + 1);
 }
 
 // Fill the display with a constant value

@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "icons.h"
 #include "Io_SSD1306.h"
-#define SNAKE_LENGTH        64
+#define SNAKE_LENGTH        5
 
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -59,7 +59,7 @@ int main(void) {
 
     ssd1306_init();             // Initialize the OLED display
 
-//    ssd1306_write_constant(0x00);
+    ssd1306_write_constant(0x00);
 
     uint8_t displayBuffer[SSD1306_BYTES];
     uint16_t headPosition = 0;
