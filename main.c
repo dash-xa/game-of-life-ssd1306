@@ -1,105 +1,169 @@
 #include <msp430.h>
-#include <stdbool.h>
 #include <stdint.h>
-#include "icons.h"
+#include <stdbool.h>
+#include <string.h>
 #include "Io_SSD1306.h"
-#define SNAKE_LENGTH        5
+#include "GameOfLifeInitializations.h"
+
+#define DELAY_TIME_US 250000
 
 
-#define min(a, b) ((a) < (b) ? (a) : (b))
+Cell activeCells[MAX_ACTIVE_CELLS];
+Cell nextActiveCells[MAX_ACTIVE_CELLS];
+uint16_t activeCellCount = 0;
+uint16_t nextActiveCellCount = 0;
 
-void clear_buffer(uint8_t* buffer) {
-    memset(buffer, 0, SSD1306_BYTES);
+void (*games[4])(void) = {
+    initializeGameWithVerticalLine,
+    initializeGameWithGliders,
+    initializeGameLWSS,
+//    initializeGameWithPulsar,
+    initializeGameWith2Pulsars
+};
+uint8_t gameIndex = 0;
+
+uint8_t displayBuffer[DISPLAY_BUFFER_SIZE];
+
+void initializeGame(void);
+void updateGame(void);
+void drawCell(uint8_t x, uint8_t y, bool state);
+int countNeighbors(uint8_t x, uint8_t y);
+void delayMs(uint16_t ms);
+
+void startGame(uint8_t i) {
+    clearDisplayBuffer();
+    activeCellCount = 0;
+    games[i]();
 }
 
-void draw_snake(uint8_t* buffer, uint16_t headPosition) {
-    uint16_t segmentLength = SNAKE_LENGTH;
-    uint16_t position = headPosition;
-
-    while (segmentLength--) {
-        uint16_t x = 0, y = 0;
-
-        // Determine the segment's position (x, y) based on the current position around the perimeter
-        if (position < SSD1306_WIDTH) {
-            // Top edge
-            x = position;
-            y = 0;
-        } else if (position < (SSD1306_WIDTH + SSD1306_HEIGHT - 2)) {
-            // Right edge
-            x = SSD1306_WIDTH - 1;
-            y = position - SSD1306_WIDTH + 1;
-        } else if (position < (2 * SSD1306_WIDTH + SSD1306_HEIGHT - 3)) {
-            // Bottom edge
-            x = 2 * SSD1306_WIDTH + SSD1306_HEIGHT - 4 - position;
-            y = SSD1306_HEIGHT - 1;
-        } else {
-            // Left edge
-            x = 0;
-            y = 2 * (SSD1306_WIDTH + SSD1306_HEIGHT - 2) - position - 1;
-        }
-
-        // Convert (x, y) to buffer index and bit position
-        uint16_t index = (y / 8) * SSD1306_WIDTH + x;
-        uint8_t bit_position = y % 8;
-        buffer[index] |= (1 << bit_position);
-
-        // Move to the next position
-        position = (position + 1) % (2 * (SSD1306_WIDTH + SSD1306_HEIGHT - 2));
-    }
+void initInterruptLogic() {
+    P1DIR = 0b00000001;             // Set  P1.0 pin for output rest including  P1.1 are outputs
+    P1OUT = 0b00000010;             // Set Pin P1.0  to low and P1.1 to pullup
+    P1REN = 0b00000010;             // Enable pull up/down resistor on P1.1
+    P1IE =  0b00000010;             // Enable input at P1.1 as an interrupt
+    _BIS_SR(GIE);                  // Turn on interrupts
 }
-
 
 int main(void) {
-    WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
+    WDTCTL = WDTPW + WDTHOLD;       // Stop watchdog timer
+    initInterruptLogic();
 
-    i2c_init();
-    init_WDT();
-    init_LED();
-    __enable_interrupt();       // Enable global interrupts
+    // Set up game
+    i2c_init(); // Initialize I2C for SSD1306
+    ssd1306_init(); // Initialize the OLED display
 
-    ssd1306_init();             // Initialize the OLED display
+    ssd1306_write_constant(0xFF);
+    delayMs(1000);
 
-    ssd1306_write_constant(0x00);
-
-    uint8_t displayBuffer[SSD1306_BYTES];
-    uint16_t headPosition = 0;
-    const uint16_t maxPosition = 2 * (SSD1306_WIDTH + SSD1306_HEIGHT - 2); // Total perimeter length
+    ssd1306_write_constant(0);
+    delayMs(1000);
 
     while (1) {
-        clear_buffer(displayBuffer);
-        draw_snake(displayBuffer, headPosition);
+        uint8_t runningGame = gameIndex;
 
-        ssd1306_write(displayBuffer);
-//        __delay_cycles(10);  // Adjust for your system's timing
+        startGame(runningGame);
+        ssd1306_write(displayBuffer); // Update display
+//        delayMs(1000);
 
-
-        headPosition = (headPosition + 1) % maxPosition;
-    }
-
-
-    while (1) {
-        // Main loop can perform other tasks or be put to sleep to save power
-        __bis_SR_register(LPM3_bits + GIE); // Enter LPM3 with interrupts
+        while (runningGame == gameIndex) {
+            updateGame();
+            ssd1306_write(displayBuffer);
+        }
     }
 }
 
-void init_WDT(void) {
-    WDTCTL = WDT_ADLY_1000;  // WDT interval timer mode, ACLK, 1000ms
-    SFRIE1 |= WDTIE;         // Enable WDT interrupt
+void __attribute__ ((interrupt(PORT1_VECTOR))) PORT1_ISR(void) {
+    gameIndex = (gameIndex + 1) % (sizeof(games) / sizeof(games[0]));
+//    P1OUT ^= 0b00000001;
+    P1IFG &= ~0b00000010; // Clear P1.1 IFG. If you don't, it just happens again.
 }
 
-void init_LED(void) {
-    P1DIR |= BIT0;           // Set P1.0 to output direction (LED)
-    P1OUT &= ~BIT0;          // Start with LED off
+void initializeGame(void) {
+    initializeGameLWSS();
 }
 
-// WDT Interrupt Service Routine
-#pragma vector=WDT_VECTOR
-
-__interrupt void WDT_ISR(void) {
-    toggle_LED();           // Toggle LED every WDT interrupt (1 second)
+void clearDisplayBuffer() {
+    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear the display buffer
 }
 
-void toggle_LED(void) {
-    P1OUT ^= BIT0;          // Toggle P1.0 using exclusive-OR
+void activateCellAndIncrementCount(uint8_t reducedX, uint8_t reducedY) {
+    activeCells[activeCellCount++] = (Cell){reducedX, reducedY};
+    drawCell(reducedX, reducedY, true);
+}
+
+bool isCellActive(uint8_t reducedX, uint8_t reducedY) {
+    int x = reducedX * CELL_SIZE;
+    int y = reducedY * CELL_SIZE;
+
+    return displayBuffer[(y / 8) * DISPLAY_WIDTH + x] & (1 << (y % 8));
+}
+
+void updateGame(void) {
+    nextActiveCellCount = 0;
+    int i;
+
+    int x, y;
+    for (x = 0; x < REDUCED_WIDTH; x++) {
+        for (y = 0; y < REDUCED_HEIGHT; y++) {
+            int count = countNeighbors(x, y); // Count live neighbors of the cell
+            bool isActive = isCellActive(x, y);
+            bool nextState = (isActive && (count == 2 || count == 3)) || (!isActive && count == 3);
+
+            // If the cell should be alive in the next generation, add it to the nextActiveCells array
+            if (nextState && nextActiveCellCount < MAX_ACTIVE_CELLS) {
+                nextActiveCells[nextActiveCellCount++] = (Cell){x, y};
+                // Note: You might want to directly update displayBuffer here if drawing cells immediately
+            }
+        }
+    }
+
+    // update displays
+    for (i = 0; i < activeCellCount; i++) {
+        drawCell(activeCells[i].x, activeCells[i].y, false);
+    }
+    for (i = 0; i < nextActiveCellCount; i++) {
+        drawCell(nextActiveCells[i].x, nextActiveCells[i].y, true);
+    }
+
+    memcpy(activeCells, nextActiveCells, sizeof(Cell) * nextActiveCellCount);
+    activeCellCount = nextActiveCellCount;
+}
+
+void drawCell(uint8_t reducedX, uint8_t reducedY, bool state) {
+    int startX = reducedX * CELL_SIZE;
+    int startY = reducedY * CELL_SIZE;
+
+    int x, y;
+    for (x = startX; x < startX + CELL_SIZE; x++) {
+        for (y = startY; y < startY + CELL_SIZE; y++) {
+            uint16_t byteIndex = (y / 8) * DISPLAY_WIDTH + x;
+            if (state) {
+                displayBuffer[byteIndex] |= (1 << (y % 8));
+            } else {
+                displayBuffer[byteIndex] &= ~(1 << (y % 8));
+            }
+        }
+    }
+}
+
+int countNeighbors(uint8_t x, uint8_t y) {
+    int dx, dy;
+    int count = 0;
+    for (dx = -1; dx <= 1; dx++) {
+        for (dy = -1; dy <= 1; dy++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = (x + dx + REDUCED_WIDTH) % REDUCED_WIDTH;
+            int ny = (y + dy + REDUCED_HEIGHT) % REDUCED_HEIGHT;
+            if (isCellActive(nx, ny)) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+void delayMs(uint16_t ms) {
+    while (ms--) {
+        __delay_cycles(1000);
+    }
 }
