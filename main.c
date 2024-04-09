@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-#include "Io_SSD1306.h" // Ensure this contains prototypes for ssd1306_write() and i2c_transmit()
+#include "Io_SSD1306.h" // Include your SSD1306 library
 
 #define DISPLAY_WIDTH 128
 #define DISPLAY_HEIGHT 64
@@ -12,77 +12,83 @@ uint8_t displayBuffer[DISPLAY_BUFFER_SIZE];
 
 void initializeGame(void);
 void updateGame(void);
-void drawPixel(int x, int y, bool state);
+void drawHorizontalLine(void);
 int countNeighbors(int x, int y);
-extern void ssd1306_write(const uint8_t img[]);
+void delaySeconds(int seconds);
+extern void ssd1306_write(const uint8_t img[]); // Make sure this matches your SSD1306 library
 
 int main(void) {
     WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
     __enable_interrupt();       // Enable global interrupts
-    i2c_init();                 // Initialize I2C for SSD1306, make sure this is set up for your MSP430
+    i2c_init();                 // Initialize I2C for SSD1306
     ssd1306_init();             // Initialize the OLED display
 
-    initializeGame();
-    while(1) {
+    drawHorizontalLine();       // Draw a horizontal line
+    ssd1306_write(displayBuffer);
+    delaySeconds(2);            // Hold the line for 2 seconds
+
+    initializeGame();           // Set initial state for Game of Life
+    while (1) {
         updateGame();
         ssd1306_write(displayBuffer);
-        __delay_cycles(500000); // Adjust delay for game speed
+        delaySeconds(1); // Game speed, adjust as needed
     }
 }
 
 void initializeGame(void) {
-    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear display buffer
-    // Example initialization: Glider pattern
-    drawPixel(2, 3, true);
-    drawPixel(3, 4, true);
-    drawPixel(4, 2, true);
-    drawPixel(4, 3, true);
-    drawPixel(4, 4, true);
-}
-
-void drawPixel(int x, int y, bool state) {
-    int byteIndex = x + (y / 8) * DISPLAY_WIDTH;
-    if (state) {
-        displayBuffer[byteIndex] |= (1 << (y % 8));
-    } else {
-        displayBuffer[byteIndex] &= ~(1 << (y % 8));
+    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear the display buffer
+    // Example: Initialize a glider
+    int positions[][2] = {{1, 0}, {2, 1}, {0, 2}, {1, 2}, {2, 2}}; // Coordinates for a glider
+    for (int i = 0; i < 5; i++) {
+        int x = positions[i][0] + DISPLAY_WIDTH / 2; // Center the glider
+        int y = positions[i][1] + DISPLAY_HEIGHT / 2;
+        displayBuffer[(y / 8) * DISPLAY_WIDTH + x] |= (1 << (y % 8));
     }
 }
 
 void updateGame(void) {
     uint8_t nextBuffer[DISPLAY_BUFFER_SIZE];
-    memset(nextBuffer, 0, DISPLAY_BUFFER_SIZE); // Prepare the next state buffer
+    memset(nextBuffer, 0, DISPLAY_BUFFER_SIZE);
 
-    int x, y;
-    for (x = 0; x < DISPLAY_WIDTH; x++) {
-        for (y = 0; y < DISPLAY_HEIGHT; y++) {
-            int count = countNeighbors(x, y);
-            int byteIndex = x + (y / 8) * DISPLAY_WIDTH;
-            bool isAlive = displayBuffer[byteIndex] & (1 << (y % 8));
-            bool nextState = (isAlive && (count == 2 || count == 3)) || (!isAlive && count == 3);
+    for (int x = 0; x < DISPLAY_WIDTH; x++) {
+        for (int y = 0; y < DISPLAY_HEIGHT; y++) {
+            int neighbors = countNeighbors(x, y);
+            bool isAlive = (displayBuffer[(y / 8) * DISPLAY_WIDTH + x] & (1 << (y % 8))) != 0;
+            bool nextState = (isAlive && (neighbors == 2 || neighbors == 3)) || (!isAlive && neighbors == 3);
 
             if (nextState) {
-                nextBuffer[byteIndex] |= (1 << (y % 8));
+                nextBuffer[(y / 8) * DISPLAY_WIDTH + x] |= (1 << (y % 8));
             }
         }
     }
-    memcpy(displayBuffer, nextBuffer, DISPLAY_BUFFER_SIZE); // Update current state
+    memcpy(displayBuffer, nextBuffer, DISPLAY_BUFFER_SIZE);
 }
 
 int countNeighbors(int x, int y) {
-    int count = 0, dx, dy, nx, ny;
-    for (dx = -1; dx <= 1; dx++) {
-        for (dy = -1; dy <= 1; dy++) {
-            if (dx == 0 && dy == 0) continue; // Skip the cell itself
-
-            nx = (x + dx + DISPLAY_WIDTH) % DISPLAY_WIDTH;
-            ny = (y + dy + DISPLAY_HEIGHT) % DISPLAY_HEIGHT;
-            int byteIndex = nx + (ny / 8) * DISPLAY_WIDTH;
-
-            if (displayBuffer[byteIndex] & (1 << (ny % 8))) {
+    int count = 0;
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = (x + dx + DISPLAY_WIDTH) % DISPLAY_WIDTH;
+            int ny = (y + dy + DISPLAY_HEIGHT) % DISPLAY_HEIGHT;
+            if (displayBuffer[(ny / 8) * DISPLAY_WIDTH + nx] & (1 << (ny % 8))) {
                 count++;
             }
         }
     }
     return count;
+}
+
+void drawHorizontalLine(void) {
+    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear display buffer
+    int yMiddle = DISPLAY_HEIGHT / 2;
+    for (int x = 0; x < DISPLAY_WIDTH; x++) {
+        displayBuffer[(yMiddle / 8) * DISPLAY_WIDTH + x] |= (1 << (yMiddle % 8));
+    }
+}
+
+void delaySeconds(int seconds) {
+    for (int i = 0; i < seconds * 1000; i++) {
+        __delay_cycles(1000); // Assumes a 1MHz clock. Adjust __delay_cycles accordingly.
+    }
 }
