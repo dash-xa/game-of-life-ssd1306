@@ -10,39 +10,24 @@
 
 uint8_t displayBuffer[DISPLAY_BUFFER_SIZE];
 
-void initializeGame(void);
-void updateGame(void);
-void drawHorizontalLine(void);
-int countNeighbors(int x, int y);
-void delaySeconds(int seconds);
-extern void ssd1306_write(const uint8_t img[]); // Make sure this matches your SSD1306 library
-
-int main(void) {
-    WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
-    __enable_interrupt();       // Enable global interrupts
-    i2c_init();                 // Initialize I2C for SSD1306
-    ssd1306_init();             // Initialize the OLED display
-
-    drawHorizontalLine();       // Draw a horizontal line
-    ssd1306_write(displayBuffer);
-    delaySeconds(2);            // Hold the line for 2 seconds
-
-    initializeGame();           // Set initial state for Game of Life
-    while (1) {
-        updateGame();
-        ssd1306_write(displayBuffer);
-        delaySeconds(1); // Game speed, adjust as needed
-    }
-}
 
 void initializeGame(void) {
     memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear the display buffer
-    // Example: Initialize a glider
-    int positions[][2] = {{1, 0}, {2, 1}, {0, 2}, {1, 2}, {2, 2}}; // Coordinates for a glider
-    for (int i = 0; i < 5; i++) {
-        int x = positions[i][0] + DISPLAY_WIDTH / 2; // Center the glider
-        int y = positions[i][1] + DISPLAY_HEIGHT / 2;
-        displayBuffer[(y / 8) * DISPLAY_WIDTH + x] |= (1 << (y % 8));
+
+    // Coordinates for a glider pattern
+    int positions[][2] = {{1, 0}, {2, 1}, {0, 2}, {1, 2}, {2, 2}};
+    int i;
+    for (i = 0; i < 5; i++) {
+        // Adjust x and y positions to center the glider on the display
+        int x = positions[i][0] + (DISPLAY_WIDTH / 2 - 1); // Center horizontally, adjust by -1 to align
+        int y = positions[i][1] + (DISPLAY_HEIGHT / 2 - 1); // Center vertically, adjust by -1 to align
+
+        // Calculate byte index and bit position for each cell of the glider
+        int byteIndex = (y / 8) * DISPLAY_WIDTH + x;
+        int bitPosition = y % 8;
+
+        // Set the corresponding bit to make the cell "alive"
+        displayBuffer[byteIndex] |= (1 << bitPosition);
     }
 }
 
@@ -50,14 +35,17 @@ void updateGame(void) {
     uint8_t nextBuffer[DISPLAY_BUFFER_SIZE];
     memset(nextBuffer, 0, DISPLAY_BUFFER_SIZE);
 
-    for (int x = 0; x < DISPLAY_WIDTH; x++) {
-        for (int y = 0; y < DISPLAY_HEIGHT; y++) {
-            int neighbors = countNeighbors(x, y);
-            bool isAlive = (displayBuffer[(y / 8) * DISPLAY_WIDTH + x] & (1 << (y % 8))) != 0;
-            bool nextState = (isAlive && (neighbors == 2 || neighbors == 3)) || (!isAlive && neighbors == 3);
+    int x, y, dx, dy, nx, ny, byteIndex, neighbors;
+    bool isAlive, nextState;
+    for (x = 0; x < DISPLAY_WIDTH; x++) {
+        for (y = 0; y < DISPLAY_HEIGHT; y++) {
+            neighbors = countNeighbors(x, y);
+            byteIndex = (y / 8) * DISPLAY_WIDTH + x;
+            isAlive = (displayBuffer[byteIndex] & (1 << (y % 8))) != 0;
+            nextState = (isAlive && (neighbors == 2 || neighbors == 3)) || (!isAlive && neighbors == 3);
 
             if (nextState) {
-                nextBuffer[(y / 8) * DISPLAY_WIDTH + x] |= (1 << (y % 8));
+                nextBuffer[byteIndex] |= (1 << (y % 8));
             }
         }
     }
@@ -66,12 +54,14 @@ void updateGame(void) {
 
 int countNeighbors(int x, int y) {
     int count = 0;
-    for (int dx = -1; dx <= 1; dx++) {
-        for (int dy = -1; dy <= 1; dy++) {
+    int dx, dy, nx, ny, byteIndex;
+    for (dx = -1; dx <= 1; dx++) {
+        for (dy = -1; dy <= 1; dy++) {
             if (dx == 0 && dy == 0) continue;
-            int nx = (x + dx + DISPLAY_WIDTH) % DISPLAY_WIDTH;
-            int ny = (y + dy + DISPLAY_HEIGHT) % DISPLAY_HEIGHT;
-            if (displayBuffer[(ny / 8) * DISPLAY_WIDTH + nx] & (1 << (ny % 8))) {
+            nx = (x + dx + DISPLAY_WIDTH) % DISPLAY_WIDTH;
+            ny = (y + dy + DISPLAY_HEIGHT) % DISPLAY_HEIGHT;
+            byteIndex = (ny / 8) * DISPLAY_WIDTH + nx;
+            if (displayBuffer[byteIndex] & (1 << (ny % 8))) {
                 count++;
             }
         }
@@ -80,15 +70,44 @@ int countNeighbors(int x, int y) {
 }
 
 void drawHorizontalLine(void) {
-    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear display buffer
+    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE);
     int yMiddle = DISPLAY_HEIGHT / 2;
-    for (int x = 0; x < DISPLAY_WIDTH; x++) {
-        displayBuffer[(yMiddle / 8) * DISPLAY_WIDTH + x] |= (1 << (yMiddle % 8));
+    int x, byteIndex;
+    for (x = 0; x < DISPLAY_WIDTH; x++) {
+        byteIndex = (yMiddle / 8) * DISPLAY_WIDTH + x;
+        displayBuffer[byteIndex] |= (1 << (yMiddle % 8));
     }
 }
 
 void delaySeconds(int seconds) {
-    for (int i = 0; i < seconds * 1000; i++) {
-        __delay_cycles(1000); // Assumes a 1MHz clock. Adjust __delay_cycles accordingly.
+    int i;
+    for (i = 0; i < seconds * 1000; i++) {
+        __delay_cycles(1000); // Assumes a 1MHz clock, adjust as necessary.
+    }
+}
+
+void main(void) {
+    WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
+    __enable_interrupt();
+    i2c_init();
+    ssd1306_init();
+
+    ssd1306_write_constant(0);
+    drawHorizontalLine();
+    ssd1306_write(displayBuffer);
+    delaySeconds(2);
+
+
+    ssd1306_write_constant(0);
+    delaySeconds(2);
+
+    initializeGame();
+    while (1) {
+        ssd1306_write_constant(0);
+        delaySeconds(1);
+
+        updateGame();
+        ssd1306_write(displayBuffer);
+//        delaySeconds(1);
     }
 }

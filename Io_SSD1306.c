@@ -1,104 +1,97 @@
+#include "Io_SSD1306.h"
 #include <msp430.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
-#include "Io_SSD1306.h" // Include your SSD1306 library
+#include "icons.h"  // Assuming this header is provided by you and contains image data for the display
+#include <string.h> // For memcpy and memset
 
-#define DISPLAY_WIDTH 128
-#define DISPLAY_HEIGHT 64
-#define DISPLAY_BUFFER_SIZE (DISPLAY_WIDTH * DISPLAY_HEIGHT / 8)
+// Define the initialization command sequence for SSD1306
+const ssd1306_cmd_t ssd1306_init_cmds[] = {
+        SSD1306_DISPLAYOFF,
+        SSD1306_MEMORYMODE | 0x0,
+        SSD1306_COMSCANDEC,
+        SSD1306_SETSTARTLINE | 0x00,
+        SSD1306_SETCONTRAST, 0x7F,
+        SSD1306_SEGREMAP | 0x01,
+        SSD1306_NORMALDISPLAY,
+        SSD1306_SETMULTIPLEX, 63,
+        SSD1306_SETDISPLAYOFFSET, 0x00,
+        SSD1306_SETDISPLAYCLOCKDIV, 0x80,
+        SSD1306_SETPRECHARGE, 0x22,
+        SSD1306_SETCOMPINS, 0x12,
+        SSD1306_SETVCOMDETECT, 0x20,
+        SSD1306_CHARGEPUMP, 0x14,
+        SSD1306_DISPLAYALLON_RESUME,
+        SSD1306_DISPLAYON,
+};
 
-uint8_t displayBuffer[DISPLAY_BUFFER_SIZE];
+// Initialize the I2C for SSD1306 communication
+void i2c_init(void) {
+    P3SEL |= BIT0 + BIT1; // Assign I2C pins
 
-// Function Prototypes
-void initializeGame(void);
-void updateGame(void);
-void drawHorizontalLine(void);
-int countNeighbors(int x, int y);
-void delaySeconds(int seconds);
-extern void ssd1306_write(const uint8_t img[]);
-
-void main(void) {
-    WDTCTL = WDTPW | WDTHOLD;   // Stop watchdog timer
-    __enable_interrupt();
-    i2c_init();
-    ssd1306_init();
-
-    drawHorizontalLine();
-    ssd1306_write(displayBuffer);
-    delaySeconds(2);
-
-    initializeGame();
-    while (1) {
-        updateGame();
-        ssd1306_write(displayBuffer);
-        delaySeconds(1);
-    }
+    UCB0CTL1 |= UCSWRST; // Enable SW reset
+    UCB0CTL0 = UCMST + UCMODE_3 + UCSYNC; // I2C Master, synchronous mode
+    UCB0CTL1 = UCSSEL_2 + UCSWRST; // Use SMCLK, keep SW reset
+    UCB0BR0 = 2; // Set baud rate
+    UCB0BR1 = 0;
+    UCB0I2CSA = SSD1306_I2C_ADDRESS; // Set slave address
+    UCB0CTL1 &= ~UCSWRST; // Clear SW reset, resume operation
 }
 
-void initializeGame(void) {
-    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear the display buffer
-    // Coordinates for a glider
-    int positions[][2] = {{1, 0}, {2, 1}, {0, 2}, {1, 2}, {2, 2}};
+// Transmit data over I2C
+void i2c_transmit_pre(uint8_t pre, uint8_t *buf, int len) {
     int i;
-    for (i = 0; i < 5; i++) {
-        int x = positions[i][0] + DISPLAY_WIDTH / 2; // Center the glider
-        int y = positions[i][1] + DISPLAY_HEIGHT / 2;
-        displayBuffer[(y / 8) * DISPLAY_WIDTH + x] |= (1 << (y % 8));
+    UCB0CTL1 |= UCTR + UCTXSTT; // Transmitter mode + start condition
+
+    while (!(UCB0IFG & UCTXIFG)); // Wait until buffer is ready
+    UCB0TXBUF = pre; // Send byte
+
+    for (i = 0; i < len; i++) {
+        while (!(UCB0IFG & UCTXIFG)); // Wait until buffer is ready
+        UCB0TXBUF = buf[i]; // Send byte
     }
+
+    while (!(UCB0IFG & UCTXIFG)); // Ensure the last byte is transmitted
+    UCB0CTL1 |= UCTXSTP; // Send stop condition
+    while (UCB0CTL1 & UCTXSTP); // Wait for stop condition to be sent
 }
 
-void updateGame(void) {
-    uint8_t nextBuffer[DISPLAY_BUFFER_SIZE];
-    memset(nextBuffer, 0, DISPLAY_BUFFER_SIZE);
-
-    int x, y, dx, dy, nx, ny, byteIndex, neighbors;
-    bool isAlive, nextState;
-    for (x = 0; x < DISPLAY_WIDTH; x++) {
-        for (y = 0; y < DISPLAY_HEIGHT; y++) {
-            neighbors = countNeighbors(x, y);
-            byteIndex = (y / 8) * DISPLAY_WIDTH + x;
-            isAlive = (displayBuffer[byteIndex] & (1 << (y % 8))) != 0;
-            nextState = (isAlive && (neighbors == 2 || neighbors == 3)) || (!isAlive && neighbors == 3);
-
-            if (nextState) {
-                nextBuffer[byteIndex] |= (1 << (y % 8));
-            }
-        }
-    }
-    memcpy(displayBuffer, nextBuffer, DISPLAY_BUFFER_SIZE);
-}
-
-int countNeighbors(int x, int y) {
-    int count = 0;
-    int dx, dy, nx, ny, byteIndex;
-    for (dx = -1; dx <= 1; dx++) {
-        for (dy = -1; dy <= 1; dy++) {
-            if (dx == 0 && dy == 0) continue;
-            nx = (x + dx + DISPLAY_WIDTH) % DISPLAY_WIDTH;
-            ny = (y + dy + DISPLAY_HEIGHT) % DISPLAY_HEIGHT;
-            byteIndex = (ny / 8) * DISPLAY_WIDTH + nx;
-            if (displayBuffer[byteIndex] & (1 << (ny % 8))) {
-                count++;
-            }
-        }
-    }
-    return count;
-}
-
-void drawHorizontalLine(void) {
-    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE);
-    int yMiddle = DISPLAY_HEIGHT / 2;
-    int x, byteIndex;
-    for (x = 0; x < DISPLAY_WIDTH; x++) {
-        byteIndex = (yMiddle / 8) * DISPLAY_WIDTH + x;
-        displayBuffer[byteIndex] |= (1 << (yMiddle % 8));
-    }
-}
-
-void delaySeconds(int seconds) {
+// Transmit data over I2C
+void i2c_transmit(uint8_t *buf, int len) {
     int i;
-    for (i = 0; i < seconds * 1000; i++) {
-        __delay_cycles(1000); // Assumes a 1MHz clock, adjust as necessary.
+    UCB0CTL1 |= UCTR + UCTXSTT; // Transmitter mode + start condition
+
+    for (i = 0; i < len; i++) {
+        while (!(UCB0IFG & UCTXIFG)); // Wait until buffer is ready
+        UCB0TXBUF = buf[i]; // Send byte
     }
+
+    while (!(UCB0IFG & UCTXIFG)); // Ensure the last byte is transmitted
+    UCB0CTL1 |= UCTXSTP; // Send stop condition
+    while (UCB0CTL1 & UCTXSTP); // Wait for stop condition to be sent
+}
+
+// Initialize the SSD1306 display
+void ssd1306_init(void) {
+    int i;
+    for (i = 0; i < sizeof(ssd1306_init_cmds) / sizeof(ssd1306_cmd_t); i++) {
+        uint8_t cmd[2] = {0x00, ssd1306_init_cmds[i]};
+        i2c_transmit(cmd, 2);
+    }
+}
+
+// Write an image to the SSD1306 display
+void ssd1306_write(const uint8_t img[]) {
+    uint8_t page_buf[] = {0x00, SSD1306_PAGEADDR, 0, 7};
+    i2c_transmit(page_buf, sizeof(page_buf));
+
+    uint8_t col_buf[] = {0x00, SSD1306_COLUMNADDR, 0, 127};
+    i2c_transmit(col_buf, sizeof(col_buf));
+
+    i2c_transmit_pre(0x40, img, SSD1306_BYTES + 1);
+}
+
+// Fill the display with a constant value
+void ssd1306_write_constant(const uint8_t val) {
+    uint8_t img[SSD1306_BYTES];
+    memset(img, val, SSD1306_BYTES);
+    ssd1306_write(img);
 }
