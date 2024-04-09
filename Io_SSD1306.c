@@ -30,7 +30,7 @@ void i2c_init(void) {
     UCB0CTL1 |= UCSWRST; // Enable SW reset
     UCB0CTL0 = UCMST + UCMODE_3 + UCSYNC; // I2C Master, synchronous mode
     UCB0CTL1 = UCSSEL_2 + UCSWRST; // Use SMCLK, keep SW reset
-    UCB0BR0 = 10; // Set baud rate
+    UCB0BR0 = 2; // Set baud rate
     UCB0BR1 = 0;
     UCB0I2CSA = SSD1306_I2C_ADDRESS; // Set slave address
     UCB0CTL1 &= ~UCSWRST; // Clear SW reset, resume operation
