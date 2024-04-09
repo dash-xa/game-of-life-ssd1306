@@ -7,7 +7,7 @@
 #define DISPLAY_WIDTH 128
 #define DISPLAY_HEIGHT 64
 #define DISPLAY_BUFFER_SIZE (DISPLAY_WIDTH * DISPLAY_HEIGHT / 8)
-#define MAX_ACTIVE_CELLS 500
+#define MAX_ACTIVE_CELLS 3000
 
 typedef struct {
     uint8_t x;
@@ -32,8 +32,15 @@ int main(void) {
     i2c_init(); // Initialize I2C for SSD1306
     ssd1306_init(); // Initialize the OLED display
 
-    memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear display buffer
+    ssd1306_write_constant(0xFF);
+    delayMs(1000);
+
+    ssd1306_write_constant(0);
+    delayMs(1000);
+
     initializeGame();
+    ssd1306_write(displayBuffer); // Update display
+
     while (1) {
         updateGame();
         ssd1306_write(displayBuffer); // Update display
@@ -46,18 +53,33 @@ void initializeGame(void) {
     memset(displayBuffer, 0, DISPLAY_BUFFER_SIZE); // Clear the display buffer
     activeCellCount = 0; // Reset active cell count
 
-    // Center of the display
-    uint8_t centerX = DISPLAY_WIDTH / 2;
-    uint8_t centerY = DISPLAY_HEIGHT / 2;
+    // Define spacing between gliders and their starting position
+    int spacingX = 10;
+    int spacingY = 10;
+    int startX = 10;
+    int startY = 10;
 
-    // Simple pattern - adjust the coordinates for your pattern
-    // This example uses a "+" pattern for simplicity
-    activateCell(centerX, centerY); // Center dot
-    activateCell(centerX - 1, centerY); // Left
-    activateCell(centerX + 1, centerY); // Right
-    activateCell(centerX, centerY - 1); // Top
-    activateCell(centerX, centerY + 1); // Bottom
+    // Calculate the number of gliders and ensure we stay within the active cell limit
+    int gliderCount = 20; // Example count, adjust based on your requirements
+
+    int i, x, y; // Declare iteration variables outside of loops
+
+    for (i = 0; i < gliderCount; i++) {
+        x = startX + (spacingX * i); // X position for the current glider
+        y = startY + (spacingY * i); // Y position for the current glider
+
+        // Check to ensure the glider will fit within the display boundaries
+        if (x + 2 < DISPLAY_WIDTH && y + 2 < DISPLAY_HEIGHT) {
+            // Define the standard glider pattern
+            activateCell(x + 1, y);
+            activateCell(x + 2, y + 1);
+            activateCell(x, y + 2);
+            activateCell(x + 1, y + 2);
+            activateCell(x + 2, y + 2);
+        }
+    }
 }
+
 
 void updateGame(void) {
     Cell nextActiveCells[MAX_ACTIVE_CELLS];
