@@ -73,10 +73,31 @@ void initializeGameWithVerticalLine(void) {
     int x = REDUCED_WIDTH / 2;
     int y;
     for (y = 2; y < REDUCED_HEIGHT - 2; y++) {
-//        activeCells[activeCellCount++] = (Cell){x, y};
-//        drawCell(x, y, true);
         activateCellAndIncrementCount(x, y);
     }
+}
+
+
+void placeLWSS(uint8_t startX, uint8_t startY) {
+    /*
+     *  # . . # .
+        . . . . #
+        # . . . #
+        . # # # #
+     */
+
+    activateCellAndIncrementCount(startX, startY);
+    activateCellAndIncrementCount(startX + 3, startY);
+
+    activateCellAndIncrementCount(startX + 4, startY + 1);
+
+    activateCellAndIncrementCount(startX, startY + 2);
+    activateCellAndIncrementCount(startX + 4, startY + 2);
+
+    activateCellAndIncrementCount(startX + 1, startY + 3);
+    activateCellAndIncrementCount(startX + 2, startY + 3);
+    activateCellAndIncrementCount(startX + 3, startY + 3);
+    activateCellAndIncrementCount(startX + 4, startY + 3);
 }
 
 
@@ -90,7 +111,7 @@ void placeGlider(uint8_t startX, uint8_t startY) {
     activateCellAndIncrementCount(startX + 1, startY);
 }
 
-void initializeGame(void) {
+void initializeGameWithGliders(void) {
     clearDisplayBuffer();  // Ensures the display starts clean
     activeCellCount = 0;   // Reset the count of active cells
 
@@ -101,6 +122,24 @@ void initializeGame(void) {
     placeGlider(REDUCED_WIDTH - 5, REDUCED_HEIGHT - 5);  // Bottom-right glider
 }
 
+// checkerboard
+void initializeGame(void) {
+    clearDisplayBuffer();
+    activeCellCount = 0;
+
+    int xLeft = REDUCED_WIDTH / 4 - 4;
+    int xRight = 3 * REDUCED_WIDTH / 4 - 4;
+
+    int yLeft = REDUCED_HEIGHT / 4 - 4;
+    int yRight = 3 * REDUCED_HEIGHT / 4 - 4;
+
+    placeLWSS(xLeft,  yLeft);
+    placeLWSS(xLeft,  yRight);
+    placeLWSS(xRight,  yLeft);
+    placeLWSS(xRight,  yRight);
+}
+
+
 bool isCellActive(uint8_t reducedX, uint8_t reducedY) {
     int x = reducedX * CELL_SIZE;
     int y = reducedY * CELL_SIZE;
@@ -110,33 +149,7 @@ bool isCellActive(uint8_t reducedX, uint8_t reducedY) {
 
 void updateGame(void) {
     nextActiveCellCount = 0;
-    bool isActive, nextState;
     int i;
-
-    /*
-    for (i = 0; i < activeCellCount; i++) {
-        int x = activeCells[i].x;
-        int y = activeCells[i].y;
-
-        int dx, dy;
-        for (dx = -1; dx <= 1; dx++) {
-            for (dy = -1; dy <= 1; dy++) {
-                int nx = (x + dx + REDUCED_WIDTH) % REDUCED_WIDTH;
-                int ny = (y + dy + REDUCED_HEIGHT) % REDUCED_HEIGHT;
-
-                if (1) {
-                    int count = countNeighbors(nx, ny);
-
-                    isActive = isCellActive(nx, ny);
-                    nextState = (isActive && (count == 2 || count == 3)) || (!isActive && count == 3);
-
-                    if (nextState && nextActiveCellCount < MAX_ACTIVE_CELLS) {
-                        nextActiveCells[nextActiveCellCount++] = (Cell){nx, ny};
-                    }
-                }
-            }
-        }
-    }*/
 
     int x, y;
     for (x = 0; x < REDUCED_WIDTH; x++) {
@@ -157,7 +170,6 @@ void updateGame(void) {
     for (i = 0; i < activeCellCount; i++) {
         drawCell(activeCells[i].x, activeCells[i].y, false);
     }
-//    clearDisplayBuffer();
     for (i = 0; i < nextActiveCellCount; i++) {
         drawCell(nextActiveCells[i].x, nextActiveCells[i].y, true);
     }
