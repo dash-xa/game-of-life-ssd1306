@@ -58,3 +58,7 @@ dkms.conf
 .cproject
 .project
 .DS_Store
+
+*.cmd
+targetConfigs
+
