@@ -1,4 +1,4 @@
-# Running the game of life on an SSD1306
+# Conway's Game Of Life on an SSD1306
 
 ## Hardware details
 - MCU: MSP430F5529
