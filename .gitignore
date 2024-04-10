@@ -57,3 +57,4 @@ dkms.conf
 .ccsproject
 .cproject
 .project
+.DS_Store
